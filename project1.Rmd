@@ -1,0 +1,622 @@
+---
+title: "project1-YouTube "
+author: "Long QIN(23829101)"
+date: "2023-09-03"
+output: html_document
+runtime: shiny
+---
+
+[YouTube URL:](https://youtu.be/MPLLKMtn9eE) https://youtu.be/MPLLKMtn9eE
+
+# 1 Prepare
+## 1.1 Library
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(stats)
+```
+
+## 1.2 Self_defined Function
+
+```{r}
+# get the number of missing data in the column
+count_missing <- function(df) {
+sapply(df, FUN = function(col) sum(is.na(col)) )
+} 
+#get the number of zero in the column
+count_zero_values <- function(df, column) {
+  zero_count <- sum(df[[column]] == 0, na.rm = TRUE)
+  return(zero_count)
+}
+
+# Replace NA values with medians for specific columns
+replace_with_median <- function(df, column_names) {
+  for (column_name in column_names) {
+    median_value <- median(df[[column_name]], na.rm = TRUE)
+    df[[column_name]] <- ifelse(is.na(df[[column_name]]), median_value, df[[column_name]])
+  }
+  return(df)
+}
+
+# Replace NA values with "unknown" for specific columns
+replace_with_unknown <- function(df, column_names) {
+  for (column_name in column_names) {
+    df[[column_name]][is.na(df[[column_name]])] <- "unknown"
+  }
+  return(df)
+}
+
+# Function to count zero, negative, and infinite values
+count_zero_negative_infinite <- function(column) {
+  zero_count <- sum(column == 0)
+  negative_count <- sum(column < 0 | is.na(column))
+  infinite_count <- sum(is.infinite(column))
+  
+  return(c(zero_count, negative_count, infinite_count))
+}
+```
+
+
+## 1.3 Load the data
+```{r }
+
+youtube <- read.csv("C:\\Users\\qinlo\\OneDrive\\Desktop\\4009_Computational_Data_Analysis\\week4\\Global YouTube Statistics.csv")
+
+# Replace "nan" and "NaN" with NA in the entire dataframe
+youtube <- youtube %>%
+  mutate_all(~ ifelse(. %in% c("nan", "NaN"), NA, .))
+
+nrow(youtube)
+
+count_missing(youtube)
+```
+Number of Observations (rows): 995.
+Number of Variables (columns): 28.
+
+#  2 Data clean  
+##  2.1 Error data processing
+### 2.1.1 Error data in video.views 
+```{r}
+zero_video.views <- count_zero_values(youtube,"video.views")
+cat("Number of Zero in  Video Views:", zero_video.views, "\n")
+```
+As we can see from the output that There is no invalid values in Subscribers.Among the 995 rows in the dataframe, 8 rows have zero values in the 'Video Views' column. Upon closer examination of these eight rows, it's evident that there are also occurrences of 'NA' values scattered throughout these rows, which appear to be random and not systematically related. The occurrence of zero values represents only a small fraction, approximately 0.804% of the entire dataframe.
+
+So I'll drop these 8 rows, ensuring a more precise analysis of the remaining data.
+```{r}
+# Filter rows with zero video views
+youtube_v1 <- youtube[youtube$video.views != 0, ]
+
+nrow(youtube_v1)
+```
+995 - 8 == 987
+We have successfully removed those 8 rows.
+
+###  2.1.2 Error data increated_year
+
+```{r}
+# Check for values in created_year not within the range 2005 to 2023
+out_of_range_years <- youtube_v1$created_year[!(youtube_v1$created_year %in% 2005:2023)]
+
+if (length(out_of_range_years) > 0) {
+  cat("Values in created_year not in range 2005 to 2023:", paste(out_of_range_years, collapse = ", "), "\n")
+} else {
+  cat("All values in created_year are within the range 2005 to 2023.\n")
+}
+```
+So there is only one value that is out of  range,and I  will drop the rows where the "created_year" is equal to 1970.
+
+```{r}
+
+youtube_v2 <- youtube_v1[!(youtube_v1$created_year == 1970 & !is.na(youtube_v1$created_year)), ]
+
+nrow(youtube_v2)
+```
+8+1 = 9 rows have been successfully removed from the original data set which consisted of 986 rows. In total, 0.904% portion of data has been removed from the whole data set.  
+
+## 2.3 Processing missing value-NAs
+
+```{r}
+# Columns to replace NA values with medians
+columns_to_replace <- c(
+  "video_views_for_the_last_30_days","subscribers_for_last_30_days","created_year",
+  "created_date", "Gross.tertiary.education.enrollment....","Population",
+  "Unemployment.rate","Urban_population")
+
+# Call the function to replace NA values with medians for the specified columns
+youtube_v2 <- replace_with_median(youtube_v2, columns_to_replace)
+
+# Columns to replace NA values with "unknown"
+categorical_columns_to_replace <- c(
+  "Country","created_month","Abbreviation","channel_type","category")
+
+# Call the function to replace NA values with "unknown" for the specified columns
+youtube_v2 <- replace_with_unknown(youtube_v2, categorical_columns_to_replace)
+
+# drop the columns "Latitude", "Longitude", and "country_rank" 
+columns_to_drop <- c("Latitude", "Longitude", "country_rank","channel_type_rank","video_views_rank")
+youtube_v2 <- youtube_v2[, !(names(youtube_v2) %in% columns_to_drop)]
+
+count_missing(youtube_v2)
+```
+Overall,I've handled missing data by replacing NAs with medians for numerical columns and "unknown" for categorical ones. Unnecessary columns like "Latitude," "Longitude," "country_rank," "channel_type_rank," and "video_views_rank" have been dropped, as their data can be derived from other columns. This process resulted in the removal of 9 rows from the dataset.
+
+
+#  3 Performance Metrics Comparison
+### 3.1 Initial Exploratory
+There are elements that  could mark the success of the channel,such as subscribers, uploads and income.Now let us see their relations.
+
+```{r}
+# Calculate the correlation matrix
+correlation_matrix <- cor(youtube_v2[c("subscribers", "uploads", "video.views", "highest_yearly_earnings", "video_views_for_the_last_30_days")])
+
+# Convert the correlation matrix to a data frame for plotting
+correlation_df <- as.data.frame(as.table(correlation_matrix))
+names(correlation_df) <- c("Variable1", "Variable2", "Correlation")
+
+# Create a heatmap plot
+ggplot(correlation_df, aes(x = Variable1, y = Variable2, fill = Correlation)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Correlation Heatmap",
+       x = "Variables", y = "Variables",
+       fill = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1),
+         axis.text.y = element_text(angle = 30, hjust = 1))
+
+```
+
+Weak Correlation between Number of Uploads and other factors:
+This indicates that the frequency of uploads has a relatively weaker impact on the total views.
+
+Strong Correlation between Number of Subscribers and Views:
+This suggests that channels with more subscribers tend to have more views.
+
+Strong Correlation between Highest Yearly Earnings and Views:
+This suggests that channels with higher earnings also tend to have more views.
+
+Strongest Correlation between Highest Yearly Earnings and Video Views for the Last 30 Days:
+This indicates that recent video views are closely related to the highest yearly earnings, which could be a valuable insight for content creators.
+
+## 3.2 Subscribers vs. Video Views
+
+Now let us  have a closer look at the relation between Subscribers and Video Views
+```{r}
+  library(ggplot2)
+
+# Create a scatter plot with green dots and a different color for the smooth line
+ggplot(youtube_v2, aes(x = subscribers, y = video.views)) +
+  geom_point(aes(color = "orange")) + 
+  geom_smooth(color = "blue") + 
+  scale_x_log10() + 
+  labs(x = "Subscribers", y = "Video Views", title = "Scatter Plot of Subscribers vs. Video Views")
+
+ 
+```
+
+As we can  see here, Channels with a higher number of subscribers might also have higher video views, but this isn't always the case.Therefore, it is wise and safe to use  Subscribers  as the base of the rank of the channel. 
+
+## 3.3 Income analysis
+Let us  further  see the  several  income variables: lowest_monthly_earnings,highest_monthly_earnings,lowest_yearly_earnings,highest_yearly_earnings.
+```{r}
+# Select the variables of earning items
+variables_of_interest <- youtube_v2[c("lowest_monthly_earnings", "highest_monthly_earnings", "lowest_yearly_earnings", "highest_yearly_earnings")]
+
+# Create a pairwise scatterplot matrix
+pairs(variables_of_interest, col = "orange")
+
+```
+
+It's interesting to note that lowest_monthly_earnings, highest_monthly_earnings, lowest_yearly_earnings, and highest_yearly_earnings are strictly related. as you've observed. When these variables are strongly related, it suggests that there is a consistent pattern.Now we can do the following further analysis.
+
+## 3.4 Find the relationship among income items
+```{r}
+# lm()for linear regression-library(stats)
+
+# Relationship 1: "highest_monthly_earnings" = A * "lowest_monthly_earnings"
+model1 <- lm(highest_monthly_earnings ~ lowest_monthly_earnings, data = youtube_v2)
+A1 <- coef(model1)["lowest_monthly_earnings"]
+
+# Relationship 2: "highest_yearly_earnings" = B * "lowest_yearly_earnings"
+model2 <- lm(highest_yearly_earnings ~ lowest_yearly_earnings, data = youtube_v2)
+A2 <- coef(model2)["lowest_yearly_earnings"]
+
+# Relationship 3: "lowest_yearly_earnings" = C * "lowest_monthly_earnings"
+model3 <- lm(lowest_yearly_earnings ~ lowest_monthly_earnings, data = youtube_v2)
+B1 <- coef(model3)["lowest_monthly_earnings"]
+
+# Relationship 4: "highest_yearly_earnings" = D * "highest_monthly_earnings"
+model4 <- lm(highest_yearly_earnings ~ highest_monthly_earnings, data = youtube_v2)
+B2 <- coef(model4)["highest_monthly_earnings"]
+
+# Assuming you have already calculated the coefficients A, B, C, and D
+
+cat("Relationship 1: highest_monthly_earnings = A1 * lowest_monthly_earnings\n")
+cat("Value of A1:", A1, "\n")
+
+cat("Relationship 2: highest_yearly_earnings = A2 * lowest_yearly_earnings\n")
+cat("Value of A2:", A2, "\n")
+
+cat("Relationship 3: lowest_yearly_earnings = B1 * lowest_monthly_earnings\n")
+cat("Value of B1:", B1, "\n")
+
+cat("Relationship 4: highest_yearly_earnings = B2 * highest_monthly_earnings\n")
+cat("Value of B2:", B2, "\n")
+```
+This suggests that a channel's yearly earnings can be estimated by multiplying its monthly earnings by a factor of approximately 12 which makes great sense as there are 12 months in a year.The highest's earnings can also be estimated by multiplying the lowest's earning(monthly or yearly accordly) by a factor of 15.
+
+## 3.5 Income VS video_views_for_the_last_30_days
+We previously found that recent video views are strongly associated with the highest yearly earnings. Given the strict linear correlation among the four income-related variables, we will choose only one of earning-related variable for analysis
+
+```{r}
+ggplot(youtube_v2, aes(x = video_views_for_the_last_30_days, y = lowest_monthly_earnings)) +
+  geom_point(aes(color = "orange")) + 
+  geom_smooth(color = "blue") + 
+  labs(x = "video_views_for_the_last_30_days", y="lowestest_monthly_earnings" , title = "Scatter Plot of lowestest_monthly_earnings vs. video_views_for_the_last_30_days")
+```
+
+There is a strong linear correlation between "video_views_for_the_last_30_days" and "lowest_monthly_earnings" in your scatter plot. However,there are some instances where "lowest_monthly_earnings" has a value of 0.
+
+I assume that these 0 values are erroneous data and can be calculated and predicted from 'video_views_for_the_last_30_days,which leads to the following data clean.
+
+## 3.6 Further Data Clean 
+
+```{r}
+
+# Count zero, negative, and infinite values in specified columns
+count_zero_negative_infinite(youtube_v2$lowest_monthly_earnings)
+count_zero_negative_infinite(youtube_v2$highest_monthly_earnings)
+count_zero_negative_infinite(youtube_v2$lowest_yearly_earnings)
+count_zero_negative_infinite(youtube_v2$highest_yearly_earnings)
+
+## Function to replace 0, negative, and Inf values with calculated values
+replace_values <- function(column, model) {
+  # Identify rows with 0, negative, or Inf values
+  replace_indices <- which(column <= 0 | is.na(column) | is.infinite(column))
+  
+  # If there are indices to replace, calculate values using the model
+  if (length(replace_indices) > 0) {
+    replacement_values <- predict(model, newdata = youtube_v2[replace_indices, ])
+    column[replace_indices] <- replacement_values
+  }
+  
+  return(column)
+}
+
+# Replace values in 'lowest_monthly_earnings' with calculated values
+youtube_v2$lowest_monthly_earnings <- replace_values(youtube_v2$lowest_monthly_earnings, model3)
+
+# Replace values in 'highest_yearly_earnings' with calculated values
+youtube_v2$highest_yearly_earnings <- replace_values(youtube_v2$highest_yearly_earnings, model4)
+
+# Replace values in 'highest_monthly_earnings' with calculated values
+youtube_v2$highest_monthly_earnings <- replace_values(youtube_v2$highest_monthly_earnings, model1)
+
+# Replace values in 'lowest_yearly_earnings' with calculated values
+youtube_v2$lowest_yearly_earnings <- replace_values(youtube_v2$lowest_yearly_earnings, model2)
+
+# Check the count of zero, negative, and Inf values after replacement
+count_zero_values(youtube_v2, "lowest_monthly_earnings")
+count_zero_values(youtube_v2, "highest_monthly_earnings")
+count_zero_values(youtube_v2, "lowest_yearly_earnings")
+count_zero_values(youtube_v2, "highest_yearly_earnings")
+```
+Now the error 0s in these four columns have all been replaced with the predicted data.
+
+
+# 4 Time Trend
+## 4.1 Subscriber and created_year
+
+```{r}
+# Calculate total subscribers by year
+subscribers_by_year <- youtube_v2 %>%
+  group_by(created_year) %>%
+  summarise(total_subscribers = sum(subscribers, na.rm = TRUE))
+
+
+p1 <- ggplot(subscribers_by_year, aes(x = created_year, y = total_subscribers)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +  # Set border color
+  ggtitle("Total Subscribers by Year") +
+  geom_point(color = "blue") +   # Use geom_point for scatter points
+  geom_line(color = "red") +     # Use geom_line for connecting lines
+  xlab("Year") +
+  ylab("Total Subscribers") +
+  theme_minimal() +  # Use minimal theme
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels
+
+# Calculate the percentage of total subscribers by year
+subscribers_by_year$percentage <- subscribers_by_year$total_subscribers / sum(subscribers_by_year$total_subscribers) * 100
+
+# Sort the data frame by percentage in descending order
+subscribers_by_year <- subscribers_by_year[order(subscribers_by_year$percentage, decreasing = TRUE), ]
+
+# Create the circular bar plot with labels for top 3 years
+p2 <- ggplot(subscribers_by_year, aes(x = "", y = percentage, fill = factor(created_year))) +
+  geom_bar(stat = "identity", width = 1, color = "black") +
+  geom_text(aes(label = ifelse(rank(desc(percentage)) <= 3, as.character(created_year), "")), position = position_stack(vjust = 0.5)) +
+  ggtitle("") +  # Remove the title
+  xlab("") +
+  ylab("") +
+  theme_minimal() +
+  theme(legend.position = "right", legend.box = "horizontal",  # Move legend to the right
+        plot.title = element_text(hjust = 0.5, margin = margin(b = -20))) +  # Centered title at the bottom
+  coord_polar(theta = "y") +
+  scale_fill_discrete(name = "Year") 
+  #scale_y_continuous(labels = scales::percent_format(scale = 1))
+
+  grid.arrange(p1, p2, ncol = 2)
+```
+
+The majority of top channels were established in 2006, which makes sense since YouTube was founded just two years earlier. Over the years, people have consistently subscribed to these early channels. Conversely, channels created after 2016 have a diminishing presence in the top 1000 subscribed channels, reflecting changing trends.
+
+# 5 Geographical Information
+
+```{r}
+# Assuming you have already aggregated the data for sum of subscribers, uploads, and video views by country
+countrysums <- aggregate(subscribers ~ Country, youtube_v2, sum)
+countryuploads <- aggregate(uploads ~ Country, youtube_v2, sum)
+countryviews <- aggregate(video.views ~ Country, youtube_v2, sum)
+
+# Create the bar plot for subscribers
+plot_subscribers <- ggplot(countrysums, aes(x = reorder(Country, subscribers), y = subscribers)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(title = "Sum of Subscribers", x = "Country") +
+  theme(
+    plot.title = element_text(size = rel(0.9)),
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Adjust the x-axis labels
+        axis.text.y = element_text(hjust = 0.5, size = rel(0.75)))
+
+# Create the bar plot for uploads
+plot_uploads <- ggplot(countryuploads, aes(x = reorder(Country, uploads), y = uploads)) +
+  geom_bar(stat = "identity", fill = "lightgreen") +
+  coord_flip() +
+  labs(title = "Sum of Uploads", x = "Country") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(size = rel(0.9)),
+        axis.text.y = element_text(hjust = 0.5, size = rel(0.75)))
+
+# Create the bar plot for video views
+plot_views <- ggplot(countryviews, aes(x = reorder(Country, video.views), y = video.views)) +
+  geom_bar(stat = "identity", fill = "lightcoral") +
+  coord_flip() +
+  labs(title = "Sum of Video Views by Country", x = "Country") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Adjust the x-axis labels
+        plot.title = element_text(size = rel(0.9)),
+        axis.text.y = element_text(hjust = 0.5, size = rel(0.75)))
+
+# Combine the plots side by side
+grid.arrange(plot_subscribers, plot_uploads, plot_views, ncol = 3)
+
+```
+
+Views and Subscribers are more from United States whereas most uploads are from India.
+
+# 6 Category Information
+## 6.1 channel_type and country
+```{r}
+
+ggplot(data = youtube_v2) +
+  geom_count(mapping = aes(x = Country, y = channel_type, color = channel_type)) +
+  coord_flip() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1,size = 0.65 * rel(1)),axis.text.y = element_text(size = 0.65 * rel(1)))
+
+```
+
+Entertainment, Music, People, Games,People and Comdey are top 5 YouTube categories.
+
+
+## 6.2 DATA Transformation - create a new column "TYPE" 
+As  there are so many types in  channel_type, and many of them are similar.So I create a new column and we can do the more detailed analysis.
+```{r}
+print(unique(youtube_v2$channel_type))
+# Mapping function to group categories
+map_category_to_group <- function(category) {
+  if (category %in% c("Entertainment", "Games", "Music", "Comedy", "Sports","Film")) {
+    return("Entertainment")
+  } else if (category %in% c("Education", "Howto", "Tech")) {
+    return("Education")
+  } else if (category %in% c("News")) {
+    return("News")
+  } else if (category %in% c("People","Autos","Animals")) {
+    return("Life")
+  } else {
+    return("Other")
+  }
+}
+# Create a new column 'TYPE' based on the mapping function
+youtube_v2$TYPE <- sapply(youtube_v2$channel_type, map_category_to_group)
+
+# Print the unique values in the 'TYPE' column
+print(unique(youtube_v2$TYPE))
+```
+## 6.3 TYPE and the newest Trend
+
+```{r}
+library(RColorBrewer)
+# Create the scatter plot with smaller circles
+ggplot(youtube_v2, aes(x = subscribers, y = video.views, size = video_views_for_the_last_30_days, color = TYPE)) +
+  geom_point(shape = 16, stroke = 0.5, alpha = 0.5) +
+  scale_size(range = c(2, 20)) +  # Adjust the size range to smaller values
+  labs(title = "Subscribers vs. Video Views by Category",
+       x = "Subscribers",  # Updated x-axis label
+       y = "Video Views",
+       size = "Video Views for the Last 30 Days",
+       color = "New_Category") +
+  scale_color_brewer(palette = "Set2") +
+  theme_minimal() +
+  scale_x_log10() +
+  scale_y_log10() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12, face = "bold"),
+        axis.title.x = element_text(size = 10))  # Adjust x-axis label font size
+
+```
+
+Entertainment category has most views and subscribers,as well as for the  Video Views for the Last 30 Days which is also the newest trend.
+
+# 7 Summary
+
+Performance Metrics: Subscribers often correlate with higher views,and recent views show the strongest correlations with income items.
+
+Time Trend: Channels created in 2006 dominate the top subscribed channels, highlighting the importance of early adoption.
+
+Geographical Insights: The United States leads in subscribers and views, while India has the highest number of uploads.
+
+Category Analysis: Simplified into five main types, Entertainment channels have the highest engagement and represent the newest trend.
+
+# 8 Shiny
+
+```{r}
+library(shiny)
+library(shinydashboard)
+
+# Assuming your original data frame is named 'youtube_v2'
+youtube_v2 <- youtube_v2[, !(names(youtube_v2) %in% c("rank", "Youtuber", "Title", "Abbreviation"))]
+
+#includes only the columns with numerical data.
+numerical_columns <- sapply(youtube_v2, is.numeric)
+youtube_numerical <- youtube_v2[, numerical_columns]
+
+#youtube_categorical containing only the categorical columns from the youtube_v2
+categorical_columns <- sapply(youtube_v2, is.character) | sapply(youtube_v2, is.factor)
+youtube_categorical <- youtube_v2[, categorical_columns, drop = FALSE]
+
+hist_columns <- c(
+  "subscribers", 
+  "video.views", 
+  "video_views_for_the_last_30_days", 
+  "subscribers_for_last_30_days"
+)
+youtube_hist <- youtube_numerical[hist_columns]
+
+ui <- dashboardPage(
+  dashboardHeader(title = "Shiny-YouTube"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Pairwise Plot", tabName = "pairwise", icon = icon("th")),
+      menuItem("Scatter Plot", tabName = "scatter", icon = icon("area-chart")),
+      menuItem("Histogram Plot", tabName = "histogram", icon = icon("bar-chart")),
+      menuItem("Bar Plot", tabName = "barplot", icon = icon("line-chart"))
+    )
+  ),
+  dashboardBody(
+    style = "background-color: #E6F5E6; padding-bottom: 0; height: calc(100vh - 80px);",  # Adjusted height to cover the entire remaining space
+    tabItems(
+      tabItem("pairwise",
+              sidebarLayout(
+                sidebarPanel(
+                  selectizeInput("selected_attributes", "Select attributes:", names(youtube_numerical), multiple = TRUE)
+                ),
+                mainPanel(
+                  plotOutput("pairwise_plot")
+                )
+              )),
+      tabItem("scatter",
+              sidebarLayout(
+                sidebarPanel(
+                  selectInput("x_attr", "Select x-axis attribute:", names(youtube_numerical)),
+                  selectInput("y_attr", "Select y-axis attribute:", names(youtube_numerical))
+                ),
+                mainPanel(
+                  plotOutput("scatter_plot")
+                )
+              )),
+      tabItem("histogram",
+              sidebarLayout(
+                sidebarPanel(
+                  selectInput(inputId = "x1", label = "Choose x:", choices = names(youtube_hist)), 
+                  sliderInput("bins", "Number of bins:", min = 1, max = 100, value = 20)
+                ),
+                mainPanel(
+                  plotOutput("hist_plot")
+                )
+              )),
+      tabItem("barplot",
+              sidebarLayout(
+                sidebarPanel(
+                  selectInput("barplot_var", "Select variable for bar plot:", names(youtube_categorical))
+                ),
+                mainPanel(
+                  plotOutput("barplot_plot")
+                )
+              )
+      )
+    )
+  )
+)
+
+server <- function(input, output) {
+  output$pairwise_plot <- renderPlot({
+    selected_attrs <- input$selected_attributes
+    if (length(selected_attrs) < 2) {
+      return(NULL)
+    }
+    pairs(youtube_numerical[, selected_attrs])
+  })
+  
+  output$scatter_plot <- renderPlot({
+    x_attr <- input$x_attr
+    y_attr <- input$y_attr
+    ggplot(youtube_numerical, aes_string(x = x_attr, y = y_attr)) +
+      geom_point() + geom_smooth()+theme_minimal()
+  
+  })
+  
+  generate_histogram <- function(data, x_var, title) {
+  ggplot(data, aes_string(x = x_var)) +
+    scale_x_log10() +
+    geom_histogram(bins = 20, color = "white") +
+    labs(title = title, x = x_var, y = "Frequency") +  # Set x-axis label to the input variable name
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))# Rotate x-axis labels for  readability
+}
+
+output$histogram <- renderPlot({
+  generate_histogram(youtube_numerical, input$x1, input$x1)  # Pass input$x1 as the x-axis label
+})
+
+output$hist_plot <- renderPlot({
+  x <- youtube_hist[, input$x1]
+  x <- log10(x + 1e-10) 
+  bins <- seq(min(x), max(x), length.out = input$bins + 1)
+  hist(x, breaks = bins, col = 'darkgray', border = 'white',
+       xlab = input$x1,
+       main = paste("Histogram of", input$x1),
+       xaxt = "n"  # Remove default x-axis labels
+  )
+  # Customize x-axis labels for the "subscribers" variable  reference ChatGPT
+  if (input$x1 == "subscribers") {
+    axis(1, at = seq(7, 9, by = 0.1), labels = format(10^seq(7, 9, by = 0.1), scientific = FALSE))
+  } else{
+    axis(1, at = seq(floor(min(x)), ceiling(max(x)), by = 1), labels = 10^seq(floor(min(x)), ceiling(max(x)), by = 1))
+  }
+})
+
+  #barplot_plot
+  output$barplot_plot <- renderPlot({
+  barplot_data <- youtube_categorical %>%
+    group_by(.data[[input$barplot_var]]) %>%
+    summarise(count = n()) %>%
+    arrange(desc(count))  # Arrange by count in descending order
+
+  ggplot(barplot_data, aes(x = reorder(.data[[input$barplot_var]], -count), y = count, fill = .data[[input$barplot_var]])) +
+    coord_flip() +
+    geom_bar(stat = "identity") +
+    labs(
+      x = input$barplot_var,
+      y = "Count",
+      title = paste("Bar Plot of", input$barplot_var)
+    ) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+})
+}
+shinyApp(ui = ui, server = server)
+```
